@@ -46,3 +46,69 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+    operationsSorter: method
+
+
+    # Alert System Configuration
+    collateral:
+      alerts:
+        # Risk thresholds
+        critical-risk-threshold: 0.9
+        high-risk-threshold: 0.75
+        medium-risk-threshold: 0.5
+
+        # Concentration limits (as decimal, e.g., 0.25 = 25%)
+        max-asset-concentration: 0.25
+        warning-asset-concentration: 0.20
+
+        # Valuation settings
+        stale-valuation-days: 3
+        critical-valuation-days: 7
+
+        # Maturity warnings
+        maturity-warning-days: 30
+        critical-maturity-days: 7
+
+        # System settings
+        duplicate-alert-minutes: 60
+        cleanup-days: 90
+        enable-email-notifications: true
+        enable-system-wide-alerts: true
+
+        # Volatility thresholds
+        critical-volatility: 0.25
+        high-volatility: 0.15
+        medium-volatility: 0.10
+
+        # Performance settings
+        batch-size: 100
+        max-alerts-per-user: 1000
+        enable-bulk-operations: true
+
+        # Scheduling configuration
+        scheduling:
+          enabled: true
+
+    # Spring Boot Actuator for health monitoring
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,metrics,prometheus
+      endpoint:
+        health:
+          show-details: when-authorized
+      health:
+        defaults:
+          enabled: true
+
+    # Logging configuration for alerts
+    logging:
+      level:
+        com.vermeg.collateralmanagement.service.AlertService: INFO
+        com.vermeg.collateralmanagement.scheduler.AlertScheduledTasks: INFO
+        com.vermeg.collateralmanagement.controller.AlertController: INFO
+
+        spring:
+          jpa:
+            open-in-view=false:
