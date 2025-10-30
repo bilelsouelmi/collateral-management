@@ -1,11 +1,19 @@
 package com.vermeg.collateralmanagement.controller;
 
+import com.vermeg.collateralmanagement.dto.request.PasswordChangeRequest;
+import com.vermeg.collateralmanagement.dto.request.ProfileUpdateRequest;
+import com.vermeg.collateralmanagement.dto.request.UserPreferencesRequest;
+import com.vermeg.collateralmanagement.dto.response.ApiResponse;
+import com.vermeg.collateralmanagement.dto.response.ProfileResponse;
+import com.vermeg.collateralmanagement.dto.response.UserPreferencesResponse;
 import com.vermeg.collateralmanagement.entity.User;
 import com.vermeg.collateralmanagement.security.UserPrincipal;
 import com.vermeg.collateralmanagement.service.UserService;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -14,7 +22,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/api/users")
 @CrossOrigin(origins = "*")
 public class UserController {
 
@@ -22,6 +30,8 @@ public class UserController {
 
     @Autowired
     private UserService userService;
+
+    // ==================== PROFILE ENDPOINTS ====================
 
     /**
      * Get current user profile
@@ -34,6 +44,182 @@ public class UserController {
         User user = userService.findById(currentUser.getId());
         return ResponseEntity.ok(user);
     }
+
+    /**
+     * Get current user profile (detailed)
+     */
+    @GetMapping("/profile")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<ApiResponse<ProfileResponse>> getUserProfile(
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} requesting their detailed profile", currentUser.getUsername());
+
+        try {
+            ProfileResponse profile = userService.getUserProfile(currentUser.getId());
+
+            ApiResponse<ProfileResponse> response = new ApiResponse<>();
+            response.setSuccess(true);
+            response.setMessage("Profile retrieved successfully");
+            response.setData(profile);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to get user profile: {}", e.getMessage());
+
+            ApiResponse<ProfileResponse> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage("Failed to retrieve profile");
+            response.setData(null);
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Update current user profile
+     */
+    @PutMapping("/profile")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<ApiResponse<ProfileResponse>> updateUserProfile(
+            @Valid @RequestBody ProfileUpdateRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} updating their profile", currentUser.getUsername());
+
+        try {
+            ProfileResponse updatedProfile = userService.updateUserProfile(currentUser.getId(), request);
+
+            ApiResponse<ProfileResponse> response = new ApiResponse<>();
+            response.setSuccess(true);
+            response.setMessage("Profile updated successfully");
+            response.setData(updatedProfile);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            log.error("Failed to update profile: {}", e.getMessage());
+
+            ApiResponse<ProfileResponse> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage(e.getMessage());
+            response.setData(null);
+
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.error("Unexpected error updating profile: {}", e.getMessage());
+
+            ApiResponse<ProfileResponse> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage("Failed to update profile");
+            response.setData(null);
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Change user password
+     */
+    @PutMapping("/profile/password")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<ApiResponse<Void>> changePassword(
+            @Valid @RequestBody PasswordChangeRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} attempting to change password", currentUser.getUsername());
+
+        try {
+            userService.changePassword(currentUser.getId(), request);
+
+            ApiResponse<Void> response = new ApiResponse<>();
+            response.setSuccess(true);
+            response.setMessage("Password changed successfully");
+            response.setData(null);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            log.error("Failed to change password: {}", e.getMessage());
+
+            ApiResponse<Void> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage(e.getMessage());
+            response.setData(null);
+
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.error("Unexpected error changing password: {}", e.getMessage());
+
+            ApiResponse<Void> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage("Failed to change password");
+            response.setData(null);
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    // ==================== PREFERENCES/SETTINGS ENDPOINTS ====================
+
+    /**
+     * Get user preferences
+     */
+    @GetMapping("/preferences")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<ApiResponse<UserPreferencesResponse>> getUserPreferences(
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} requesting their preferences", currentUser.getUsername());
+
+        try {
+            UserPreferencesResponse preferences = userService.getUserPreferences(currentUser.getId());
+
+            ApiResponse<UserPreferencesResponse> response = new ApiResponse<>();
+            response.setSuccess(true);
+            response.setMessage("Preferences retrieved successfully");
+            response.setData(preferences);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to get user preferences: {}", e.getMessage());
+
+            ApiResponse<UserPreferencesResponse> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage("Failed to retrieve preferences");
+            response.setData(null);
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Update user preferences
+     */
+    @PutMapping("/preferences")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<ApiResponse<UserPreferencesResponse>> updateUserPreferences(
+            @Valid @RequestBody UserPreferencesRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} updating their preferences", currentUser.getUsername());
+
+        try {
+            UserPreferencesResponse updatedPreferences = userService.updateUserPreferences(
+                    currentUser.getId(), request);
+
+            ApiResponse<UserPreferencesResponse> response = new ApiResponse<>();
+            response.setSuccess(true);
+            response.setMessage("Preferences updated successfully");
+            response.setData(updatedPreferences);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to update preferences: {}", e.getMessage());
+
+            ApiResponse<UserPreferencesResponse> response = new ApiResponse<>();
+            response.setSuccess(false);
+            response.setMessage("Failed to update preferences");
+            response.setData(null);
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    // ==================== ADMIN ENDPOINTS ====================
 
     /**
      * Get all users (Admin only)

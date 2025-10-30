@@ -1,4 +1,4 @@
-// AlertService.java - Your original code with only compilation fixes
+// AlertService.java - Complete version with DTO conversion within transactions
 package com.vermeg.collateralmanagement.service;
 
 import com.vermeg.collateralmanagement.entity.*;
@@ -6,6 +6,7 @@ import com.vermeg.collateralmanagement.enums.AlertType;
 import com.vermeg.collateralmanagement.enums.AlertSeverity;
 import com.vermeg.collateralmanagement.repository.AlertRepository;
 import com.vermeg.collateralmanagement.repository.UserRepository;
+import com.vermeg.collateralmanagement.dto.response.AlertResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,9 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
-@Transactional
 @RequiredArgsConstructor
 @Slf4j
 public class AlertService {
@@ -27,6 +28,7 @@ public class AlertService {
     /**
      * Create margin call alert
      */
+    @Transactional
     public Alert createMarginAlert(User user, Portfolio portfolio, BigDecimal shortfall) {
         log.info("Creating margin alert for user: {} with shortfall: {}", user.getId(), shortfall);
 
@@ -52,6 +54,7 @@ public class AlertService {
     /**
      * Create risk threshold alert
      */
+    @Transactional
     public Alert createRiskAlert(User user, Portfolio portfolio, RiskMetric riskMetric) {
         log.info("Creating risk alert for user: {} with risk score: {}",
                 user.getId(), riskMetric.getValue());
@@ -66,7 +69,7 @@ public class AlertService {
 
         Alert alert = Alert.builder()
                 .user(user)
-                .type(AlertType.THRESHOLD_BREACH) // FIXED: Use correct enum value from your enum
+                .type(AlertType.THRESHOLD_BREACH)
                 .severity(severity)
                 .title(title)
                 .message(message)
@@ -80,6 +83,7 @@ public class AlertService {
     /**
      * Create concentration risk alert
      */
+    @Transactional
     public Alert createConcentrationAlert(User user, Portfolio portfolio,
                                           CollateralAsset asset, BigDecimal concentration) {
         log.info("Creating concentration alert for user: {} for asset: {} with concentration: {}",
@@ -108,6 +112,7 @@ public class AlertService {
     /**
      * Create asset maturity alert
      */
+    @Transactional
     public Alert createMaturityAlert(User user, CollateralAsset asset, int daysToMaturity) {
         log.info("Creating maturity alert for user: {} for asset: {} with {} days to maturity",
                 user.getId(), asset.getName(), daysToMaturity);
@@ -136,6 +141,7 @@ public class AlertService {
     /**
      * Create valuation stale alert
      */
+    @Transactional
     public Alert createStaleValuationAlert(User user, CollateralAsset asset) {
         log.info("Creating stale valuation alert for user: {} for asset: {}",
                 user.getId(), asset.getName());
@@ -162,6 +168,7 @@ public class AlertService {
     /**
      * Create system error alert
      */
+    @Transactional
     public Alert createSystemAlert(User user, String errorMessage) {
         log.info("Creating system alert for user: {}", user.getId());
 
@@ -182,9 +189,100 @@ public class AlertService {
         return alertRepository.save(alert);
     }
 
+    // ==================== DTO METHODS (FIXED FOR LAZY LOADING) ====================
+
+    /**
+     * Get user alerts as DTOs to avoid lazy loading
+     */
+    @Transactional(readOnly = true)
+    public List<AlertResponse> getUserAlertsAsDto(Long userId, boolean unreadOnly) {
+        List<Alert> alerts;
+        if (unreadOnly) {
+            alerts = alertRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId);
+        } else {
+            alerts = alertRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        }
+
+        // Convert to DTOs within the transaction while User is still accessible
+        return alerts.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Get alert details as DTO
+     */
+    @Transactional(readOnly = true)
+    public AlertResponse getAlertDetailsAsDto(Long alertId, Long userId) {
+        Alert alert = alertRepository.findById(alertId)
+                .orElseThrow(() -> new RuntimeException("Alert not found: " + alertId));
+
+        if (!alert.getUser().getId().equals(userId)) {
+            throw new RuntimeException("Access denied: Alert belongs to another user");
+        }
+
+        return convertToDto(alert);
+    }
+
+    /**
+     * Get critical alerts as DTOs
+     */
+    @Transactional(readOnly = true)
+    public List<AlertResponse> getCriticalAlertsAsDto(Long userId) {
+        List<Alert> alerts = alertRepository.findByUserIdAndSeverityOrderByCreatedAtDesc(userId, AlertSeverity.CRITICAL);
+        return alerts.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Get alerts by type as DTOs
+     */
+    @Transactional(readOnly = true)
+    public List<AlertResponse> getAlertsByTypeAsDto(Long userId, AlertType alertType) {
+        List<Alert> alerts = alertRepository.findByUserIdAndTypeOrderByCreatedAtDesc(userId, alertType);
+        return alerts.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Get alerts by severity as DTOs
+     */
+    @Transactional(readOnly = true)
+    public List<AlertResponse> getAlertsBySeverityAsDto(Long userId, AlertSeverity severity) {
+        List<Alert> alerts = alertRepository.findByUserIdAndSeverityOrderByCreatedAtDesc(userId, severity);
+        return alerts.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Mark alert as read and return DTO
+     */
+    @Transactional
+    public AlertResponse markAlertAsReadAndReturnDto(Long alertId, Long userId) {
+        log.info("User {} marking alert {} as read", userId, alertId);
+
+        Alert alert = alertRepository.findById(alertId)
+                .orElseThrow(() -> new RuntimeException("Alert not found: " + alertId));
+
+        if (!alert.getUser().getId().equals(userId)) {
+            throw new RuntimeException("Access denied: Alert belongs to another user");
+        }
+
+        alert.markAsRead();
+        Alert savedAlert = alertRepository.save(alert);
+
+        return convertToDto(savedAlert);
+    }
+
+    // ==================== LEGACY METHODS (KEEP FOR COMPATIBILITY) ====================
+
     /**
      * Get user alerts with filtering
      */
+    @Transactional(readOnly = true)
     public List<Alert> getUserAlerts(Long userId, boolean unreadOnly) {
         if (unreadOnly) {
             return alertRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId);
@@ -196,6 +294,7 @@ public class AlertService {
     /**
      * Get alert details with access control
      */
+    @Transactional(readOnly = true)
     public Alert getAlertDetails(Long alertId, Long userId) {
         Alert alert = alertRepository.findById(alertId)
                 .orElseThrow(() -> new RuntimeException("Alert not found: " + alertId));
@@ -210,6 +309,7 @@ public class AlertService {
     /**
      * Mark alert as read
      */
+    @Transactional
     public Alert markAlertAsRead(Long alertId, Long userId) {
         log.info("User {} marking alert {} as read", userId, alertId);
 
@@ -222,6 +322,7 @@ public class AlertService {
     /**
      * Mark all user alerts as read
      */
+    @Transactional
     public void markAllAlertsAsRead(Long userId) {
         log.info("Marking all alerts as read for user: {}", userId);
 
@@ -238,6 +339,7 @@ public class AlertService {
     /**
      * Get unread alert count
      */
+    @Transactional(readOnly = true)
     public long getUnreadAlertCount(Long userId) {
         return alertRepository.countByUserIdAndIsReadFalse(userId);
     }
@@ -245,6 +347,7 @@ public class AlertService {
     /**
      * Get critical alerts for user
      */
+    @Transactional(readOnly = true)
     public List<Alert> getCriticalAlerts(Long userId) {
         return alertRepository.findByUserIdAndSeverityOrderByCreatedAtDesc(userId, AlertSeverity.CRITICAL);
     }
@@ -252,6 +355,7 @@ public class AlertService {
     /**
      * Get alerts by type for user
      */
+    @Transactional(readOnly = true)
     public List<Alert> getAlertsByType(Long userId, AlertType alertType) {
         return alertRepository.findByUserIdAndTypeOrderByCreatedAtDesc(userId, alertType);
     }
@@ -259,6 +363,7 @@ public class AlertService {
     /**
      * Delete old alerts (cleanup)
      */
+    @Transactional
     public void deleteOldAlerts(int daysToKeep) {
         log.info("Cleaning up alerts older than {} days", daysToKeep);
 
@@ -272,6 +377,7 @@ public class AlertService {
     /**
      * Get alert statistics
      */
+    @Transactional(readOnly = true)
     public AlertStatistics getAlertStatistics(Long userId) {
         long totalAlerts = alertRepository.countByUserId(userId);
         long unreadAlerts = alertRepository.countByUserIdAndIsReadFalse(userId);
@@ -281,7 +387,50 @@ public class AlertService {
         return new AlertStatistics(totalAlerts, unreadAlerts, criticalAlerts, highAlerts);
     }
 
-    // Private helper methods
+    // ==================== PRIVATE HELPER METHODS ====================
+
+    /**
+     * Convert Alert entity to DTO within transaction
+     */
+    private AlertResponse convertToDto(Alert alert) {
+        return AlertResponse.builder()
+                .id(alert.getId())
+                .title(alert.getTitle())
+                .message(alert.getMessage())
+                .type(alert.getType())
+                .typeName(alert.getType().getDisplayName())
+                .severity(alert.getSeverity())
+                .severityName(alert.getSeverity().getDisplayName())
+                .createdAt(alert.getCreatedAt())
+                .triggeredAt(alert.getTriggeredAt())
+                .isRead(alert.getIsRead())
+                .isUnread(alert.isUnread())
+                .isCritical(alert.isCritical())
+                .requiresImmediateAttention(alert.requiresImmediateAttention())
+                .userId(alert.getUser().getId())
+                .userName(alert.getUser().getUsername())
+                .userFullName(alert.getUser().getFirstName() + " " + alert.getUser().getLastName())
+                .minutesSinceTriggered(alert.getMinutesSinceTriggered())
+                .timeAgo(formatTimeAgo(alert.getMinutesSinceTriggered()))
+                .build();
+    }
+
+    /**
+     * Format time ago helper method
+     */
+    private String formatTimeAgo(long minutes) {
+        if (minutes < 60) {
+            return minutes + " minutes ago";
+        } else if (minutes < 1440) { // 24 hours
+            return (minutes / 60) + " hours ago";
+        } else {
+            return (minutes / 1440) + " days ago";
+        }
+    }
+
+    /**
+     * Determine risk severity based on score
+     */
     private AlertSeverity determineRiskSeverity(BigDecimal riskScore) {
         if (riskScore.compareTo(new BigDecimal("0.9")) >= 0) {
             return AlertSeverity.CRITICAL;
@@ -294,7 +443,11 @@ public class AlertService {
         }
     }
 
-    // FIXED: Proper inner class declaration
+    // ==================== INNER CLASSES ====================
+
+    /**
+     * AlertStatistics inner class
+     */
     public static class AlertStatistics {
         public final long totalAlerts;
         public final long unreadAlerts;

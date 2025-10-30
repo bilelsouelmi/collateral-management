@@ -8,7 +8,6 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,24 +15,28 @@ import java.util.Optional;
 public interface PortfolioRepository extends JpaRepository<Portfolio, Long> {
 
     /**
-     * Find portfolios by user ID
+     * Find portfolios by user ID with user and assets eagerly loaded
      */
-    List<Portfolio> findByUserId(Long userId);
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user LEFT JOIN FETCH p.assets WHERE p.user.id = :userId")
+    List<Portfolio> findByUserId(@Param("userId") Long userId);
 
     /**
-     * Find portfolio by ID and user ID (for security)
+     * Find portfolio by ID and user ID (for security) with relationships loaded
      */
-    Optional<Portfolio> findByIdAndUserId(Long id, Long userId);
+    @Query("SELECT p FROM Portfolio p LEFT JOIN FETCH p.user LEFT JOIN FETCH p.assets WHERE p.id = :id AND p.user.id = :userId")
+    Optional<Portfolio> findByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
 
     /**
      * Find portfolios by type
      */
-    List<Portfolio> findByType(PortfolioType type);
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user LEFT JOIN FETCH p.assets WHERE p.type = :type")
+    List<Portfolio> findByType(@Param("type") PortfolioType type);
 
     /**
      * Find portfolios by user ID and type
      */
-    List<Portfolio> findByUserIdAndType(Long userId, PortfolioType type);
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user LEFT JOIN FETCH p.assets WHERE p.user.id = :userId AND p.type = :type")
+    List<Portfolio> findByUserIdAndType(@Param("userId") Long userId, @Param("type") PortfolioType type);
 
     /**
      * Check if portfolio exists by name and user
@@ -48,12 +51,14 @@ public interface PortfolioRepository extends JpaRepository<Portfolio, Long> {
     /**
      * Find user's portfolios ordered by total value descending
      */
-    List<Portfolio> findByUserIdOrderByTotalValueDesc(Long userId);
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user LEFT JOIN FETCH p.assets WHERE p.user.id = :userId ORDER BY p.totalValue DESC")
+    List<Portfolio> findByUserIdOrderByTotalValueDesc(@Param("userId") Long userId);
 
     /**
      * Find portfolios by name containing (case insensitive)
      */
-    List<Portfolio> findByNameContainingIgnoreCase(String name);
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user WHERE LOWER(p.name) LIKE LOWER(CONCAT('%', :name, '%'))")
+    List<Portfolio> findByNameContainingIgnoreCase(@Param("name") String name);
 
     /**
      * Get total value of all user's portfolios
@@ -64,7 +69,7 @@ public interface PortfolioRepository extends JpaRepository<Portfolio, Long> {
     /**
      * Find portfolios with total value greater than specified amount
      */
-    @Query("SELECT p FROM Portfolio p WHERE p.totalValue > :minValue")
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user WHERE p.totalValue > :minValue")
     List<Portfolio> findPortfoliosWithValueGreaterThan(@Param("minValue") BigDecimal minValue);
 
     /**
@@ -88,7 +93,7 @@ public interface PortfolioRepository extends JpaRepository<Portfolio, Long> {
     /**
      * Find portfolios created in date range for analytics
      */
-    @Query("SELECT p FROM Portfolio p WHERE p.createdAt BETWEEN :startDate AND :endDate ORDER BY p.createdAt DESC")
+    @Query("SELECT DISTINCT p FROM Portfolio p LEFT JOIN FETCH p.user WHERE p.createdAt BETWEEN :startDate AND :endDate ORDER BY p.createdAt DESC")
     List<Portfolio> findPortfoliosCreatedBetween(@Param("startDate") LocalDateTime startDate,
                                                  @Param("endDate") LocalDateTime endDate);
 

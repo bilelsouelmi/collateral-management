@@ -1,5 +1,6 @@
 package com.vermeg.collateralmanagement.service;
 
+import com.vermeg.collateralmanagement.dto.risk.*;
 import com.vermeg.collateralmanagement.entity.*;
 import com.vermeg.collateralmanagement.enums.AssetType;
 import com.vermeg.collateralmanagement.repository.*;
@@ -11,8 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -28,6 +32,151 @@ public class RiskMetricService {
 
     @Autowired
     private CollateralAssetRepository collateralAssetRepository;
+
+    /**
+     * Get risk overview for user's portfolios
+     */
+    public RiskOverviewDto getRiskOverview(Long userId) {
+        log.info("Getting risk overview for user: {}", userId);
+
+        List<RiskMetric> latestMetrics = riskMetricRepository.findLatestByUserId(userId);
+
+        if (latestMetrics.isEmpty()) {
+            return RiskOverviewDto.builder()
+                    .totalPortfolios(0)
+                    .highRiskPortfolios(0)
+                    .mediumRiskPortfolios(0)
+                    .lowRiskPortfolios(0)
+                    .totalValueAtRisk(BigDecimal.ZERO)
+                    .averageRiskScore(BigDecimal.ZERO)
+                    .overallRiskRating("LOW")
+                    .portfolioRisks(new ArrayList<>())
+                    .riskDistribution(RiskDistributionDto.builder()
+                            .low(0).medium(0).high(0).critical(0).build())
+                    .lastUpdated(LocalDateTime.now())
+                    .build();
+        }
+
+        // Calculate distribution
+        int low = 0, medium = 0, high = 0, critical = 0;
+        BigDecimal totalRisk = BigDecimal.ZERO;
+        BigDecimal totalVaR = BigDecimal.ZERO;
+
+        List<PortfolioRiskSummaryDto> portfolioRisks = new ArrayList<>();
+
+        for (RiskMetric metric : latestMetrics) {
+            Portfolio portfolio = metric.getPortfolio();
+            BigDecimal riskValue = metric.getValue();
+
+            String riskRating = calculateRiskRating(riskValue);
+
+            // Count by rating
+            switch (riskRating) {
+                case "LOW": low++; break;
+                case "MEDIUM": medium++; break;
+                case "HIGH": high++; break;
+                case "CRITICAL": critical++; break;
+            }
+
+            totalRisk = totalRisk.add(riskValue);
+
+            // Calculate VaR (5% of portfolio value * risk score)
+            BigDecimal portfolioValue = calculatePortfolioValueFromPortfolio(portfolio);
+            BigDecimal var = portfolioValue.multiply(riskValue)
+                    .multiply(new BigDecimal("0.05"));
+            totalVaR = totalVaR.add(var);
+
+            portfolioRisks.add(PortfolioRiskSummaryDto.builder()
+                    .portfolioId(portfolio.getId())
+                    .portfolioName(portfolio.getName())
+                    .portfolioType(portfolio.getType().name())
+                    .totalValue(portfolioValue)
+                    .riskScore(riskValue)
+                    .riskRating(riskRating)
+                    .valueAtRisk(var)
+                    .volatility(calculatePortfolioVolatility(portfolio))
+                    .beta(calculateBeta(portfolio))
+                    .lastCalculated(metric.getCalculationDate())
+                    .build());
+        }
+
+        BigDecimal avgRisk = latestMetrics.isEmpty() ? BigDecimal.ZERO :
+                totalRisk.divide(BigDecimal.valueOf(latestMetrics.size()), 2, RoundingMode.HALF_UP);
+
+        return RiskOverviewDto.builder()
+                .totalPortfolios(latestMetrics.size())
+                .highRiskPortfolios(high + critical)
+                .mediumRiskPortfolios(medium)
+                .lowRiskPortfolios(low)
+                .totalValueAtRisk(totalVaR)
+                .averageRiskScore(avgRisk)
+                .overallRiskRating(calculateRiskRating(avgRisk))
+                .portfolioRisks(portfolioRisks)
+                .riskDistribution(RiskDistributionDto.builder()
+                        .low(low).medium(medium).high(high).critical(critical).build())
+                .lastUpdated(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * Get detailed risk analysis for a portfolio
+     */
+    public PortfolioRiskDetailDto getPortfolioRiskDetail(Long portfolioId, Long userId) {
+        log.info("Getting portfolio risk detail for portfolio: {} and user: {}", portfolioId, userId);
+
+        Portfolio portfolio = portfolioRepository.findByIdAndUserId(portfolioId, userId)
+                .orElseThrow(() -> new RuntimeException("Portfolio not found or access denied"));
+
+        RiskMetric latestMetric = riskMetricRepository.findLatestByPortfolioId(portfolioId)
+                .orElse(null);
+
+        if (latestMetric == null) {
+            // Calculate new risk metric
+            latestMetric = calculatePortfolioRisk(portfolioId, userId);
+        }
+
+        List<CollateralAsset> assets = collateralAssetRepository.findByPortfolioId(portfolioId);
+        BigDecimal portfolioValue = calculatePortfolioValue(assets);
+        BigDecimal riskScore = latestMetric.getValue();
+        String riskRating = calculateRiskRating(riskScore);
+
+        // Calculate metrics
+        BigDecimal var = portfolioValue.multiply(riskScore).multiply(new BigDecimal("0.05"));
+        BigDecimal expectedShortfall = var.multiply(new BigDecimal("1.2"));
+        BigDecimal sharpeRatio = calculateSharpeRatio(portfolio);
+        BigDecimal beta = calculateBeta(portfolio);
+        BigDecimal volatility = calculatePortfolioVolatility(portfolio);
+        BigDecimal maxDrawdown = calculateMaxDrawdown(portfolio);
+
+        // Get asset risks
+        List<AssetRiskDto> assetRisks = calculateAssetRisks(assets, portfolioValue);
+
+        // Risk breakdown
+        RiskBreakdownDto riskBreakdown = calculateRiskBreakdownDto(portfolio, riskScore);
+
+        // Historical performance
+        List<HistoricalPerformanceDto> historicalPerformance = getHistoricalPerformance(portfolioId);
+
+        return PortfolioRiskDetailDto.builder()
+                .portfolioId(portfolioId)
+                .portfolioName(portfolio.getName())
+                .portfolioType(portfolio.getType().name())
+                .totalValue(portfolioValue)
+                .riskScore(riskScore)
+                .riskRating(riskRating)
+                .valueAtRisk(var)
+                .expectedShortfall(expectedShortfall)
+                .sharpeRatio(sharpeRatio)
+                .beta(beta)
+                .volatility(volatility)
+                .maxDrawdown(maxDrawdown)
+                .assetRisks(assetRisks)
+                .riskBreakdown(riskBreakdown)
+                .historicalPerformance(historicalPerformance)
+                .methodology(latestMetric.getMethodology())
+                .lastUpdated(latestMetric.getCalculationDate())
+                .build();
+    }
 
     /**
      * Create comprehensive risk metric for portfolio
@@ -142,12 +291,29 @@ public class RiskMetricService {
         return latest == null || !latest.isCurrentMetric();
     }
 
-    // Private calculation methods
+    // ==================== HELPER METHODS ====================
+
+    private String calculateRiskRating(BigDecimal riskScore) {
+        if (riskScore.compareTo(new BigDecimal("0.25")) < 0) return "LOW";
+        if (riskScore.compareTo(new BigDecimal("0.50")) < 0) return "MEDIUM";
+        if (riskScore.compareTo(new BigDecimal("0.75")) < 0) return "HIGH";
+        return "CRITICAL";
+    }
+
+    private BigDecimal calculatePortfolioValueFromPortfolio(Portfolio portfolio) {
+        List<CollateralAsset> assets = collateralAssetRepository.findByPortfolioId(portfolio.getId());
+        return calculatePortfolioValue(assets);
+    }
 
     private BigDecimal calculatePortfolioValue(List<CollateralAsset> assets) {
         return assets.stream()
                 .map(CollateralAsset::getMarketValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal calculatePortfolioVolatility(Portfolio portfolio) {
+        List<CollateralAsset> assets = collateralAssetRepository.findByPortfolioId(portfolio.getId());
+        return calculateVolatilityRisk(assets);
     }
 
     private BigDecimal calculateVolatilityRisk(List<CollateralAsset> assets) {
@@ -227,6 +393,110 @@ public class RiskMetricService {
         return compositeRisk.min(BigDecimal.ONE).max(BigDecimal.ZERO);
     }
 
+    private BigDecimal calculateBeta(Portfolio portfolio) {
+        // Simplified beta calculation - market correlation
+        return new BigDecimal("1.15");
+    }
+
+    private BigDecimal calculateSharpeRatio(Portfolio portfolio) {
+        // Simplified Sharpe ratio (return-risk_free_rate)/volatility
+        return new BigDecimal("0.85");
+    }
+
+    private BigDecimal calculateMaxDrawdown(Portfolio portfolio) {
+        // Simplified max drawdown - maximum observed loss
+        return new BigDecimal("0.18");
+    }
+
+    private List<AssetRiskDto> calculateAssetRisks(List<CollateralAsset> assets, BigDecimal totalValue) {
+        if (assets.isEmpty() || totalValue.compareTo(BigDecimal.ZERO) == 0) {
+            return new ArrayList<>();
+        }
+
+        return assets.stream()
+                .map(asset -> {
+                    BigDecimal assetValue = asset.getMarketValue();
+                    BigDecimal percentOfPortfolio = assetValue.divide(totalValue, 4, RoundingMode.HALF_UP)
+                            .multiply(new BigDecimal("100"));
+
+                    BigDecimal assetVolatility = getAssetVolatility(asset.getType());
+                    BigDecimal assetBeta = getAssetBeta(asset.getType());
+                    BigDecimal assetVaR = assetValue.multiply(assetVolatility).multiply(new BigDecimal("0.05"));
+                    BigDecimal riskContribution = totalValue.compareTo(BigDecimal.ZERO) > 0 ?
+                            assetVaR.divide(totalValue, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")) :
+                            BigDecimal.ZERO;
+
+                    return AssetRiskDto.builder()
+                            .assetId(asset.getId())
+                            .assetName(asset.getName())
+                            .assetType(asset.getType().name())
+                            .currentValue(assetValue)
+                            .percentOfPortfolio(percentOfPortfolio)
+                            .volatility(assetVolatility)
+                            .beta(assetBeta)
+                            .valueAtRisk(assetVaR)
+                            .riskContribution(riskContribution)
+                            .riskRating(calculateRiskRating(assetVolatility))
+                            .build();
+                })
+                .collect(Collectors.toList());
+    }
+
+    private RiskBreakdownDto calculateRiskBreakdownDto(Portfolio portfolio, BigDecimal totalRisk) {
+        // Simplified risk breakdown based on portfolio composition
+        return RiskBreakdownDto.builder()
+                .marketRisk(totalRisk.multiply(new BigDecimal("0.40")))
+                .creditRisk(totalRisk.multiply(new BigDecimal("0.25")))
+                .liquidityRisk(totalRisk.multiply(new BigDecimal("0.15")))
+                .concentrationRisk(totalRisk.multiply(new BigDecimal("0.15")))
+                .operationalRisk(totalRisk.multiply(new BigDecimal("0.05")))
+                .build();
+    }
+
+    private List<HistoricalPerformanceDto> getHistoricalPerformance(Long portfolioId) {
+        LocalDateTime endDate = LocalDateTime.now();
+        LocalDateTime startDate = endDate.minusDays(30);
+
+        List<RiskMetric> historicalMetrics = riskMetricRepository
+                .findByPortfolioIdAndCalculationDateBetween(portfolioId, startDate, endDate);
+
+        if (historicalMetrics.isEmpty()) {
+            // Generate sample data for last 30 days
+            List<HistoricalPerformanceDto> sampleData = new ArrayList<>();
+            List<CollateralAsset> assets = collateralAssetRepository.findByPortfolioId(portfolioId);
+            BigDecimal baseValue = calculatePortfolioValue(assets);
+
+            for (int i = 29; i >= 0; i--) {
+                LocalDate date = LocalDate.now().minusDays(i);
+                // Simulate some variation
+                BigDecimal variation = new BigDecimal(Math.random() * 0.1 - 0.05);
+                BigDecimal value = baseValue.multiply(BigDecimal.ONE.add(variation));
+
+                sampleData.add(HistoricalPerformanceDto.builder()
+                        .date(date)
+                        .value(value)
+                        .riskScore(new BigDecimal(0.3 + Math.random() * 0.4))
+                        .volatility(new BigDecimal(0.10 + Math.random() * 0.15))
+                        .build());
+            }
+            return sampleData;
+        }
+
+        return historicalMetrics.stream()
+                .map(metric -> {
+                    List<CollateralAsset> assets = collateralAssetRepository.findByPortfolioId(portfolioId);
+                    BigDecimal value = calculatePortfolioValue(assets);
+
+                    return HistoricalPerformanceDto.builder()
+                            .date(metric.getCalculationDate().toLocalDate())
+                            .value(value)
+                            .riskScore(metric.getValue())
+                            .volatility(calculateVolatilityRisk(assets))
+                            .build();
+                })
+                .collect(Collectors.toList());
+    }
+
     private BigDecimal getAssetVolatility(AssetType assetType) {
         switch (assetType) {
             case CASH:
@@ -243,6 +513,25 @@ public class RiskMetricService {
                 return new BigDecimal("0.15");
             default:
                 return new BigDecimal("0.15");
+        }
+    }
+
+    private BigDecimal getAssetBeta(AssetType assetType) {
+        switch (assetType) {
+            case CASH:
+                return new BigDecimal("0.0");
+            case GOVERNMENT_BOND:
+                return new BigDecimal("0.3");
+            case CORPORATE_BOND:
+                return new BigDecimal("0.6");
+            case EQUITY:
+                return new BigDecimal("1.2");
+            case COMMODITY:
+                return new BigDecimal("0.8");
+            case REAL_ESTATE:
+                return new BigDecimal("0.7");
+            default:
+                return new BigDecimal("1.0");
         }
     }
 

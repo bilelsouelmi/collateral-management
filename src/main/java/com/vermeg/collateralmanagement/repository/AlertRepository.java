@@ -216,7 +216,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     /**
      * Get alert trend data for charts - Uses native query for database functions
      */
-    @Query(value = "SELECT DATE(created_at) as date, COUNT(*) as total, " +
+    @Query(value = "SELECT CAST(CONCAT(DATE(created_at), ' 00:00:00') AS DATETIME) as date, COUNT(*) as total, " +
             "SUM(CASE WHEN severity = 'CRITICAL' THEN 1 ELSE 0 END) as critical, " +
             "SUM(CASE WHEN is_read = false THEN 1 ELSE 0 END) as unread " +
             "FROM alerts WHERE created_at >= :startDate AND user_id = :userId " +
@@ -236,5 +236,5 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             "SUM(CASE WHEN is_read = false THEN 1 ELSE 0 END) as unread " +
             "FROM alerts WHERE user_id = :userId AND created_at >= :since",
             nativeQuery = true)
-    Object[] getAlertSummaryByUser(@Param("userId") Long userId, @Param("since") LocalDateTime since);
+    List<Object[]> getAlertSummaryByUser(@Param("userId") Long userId, @Param("since") LocalDateTime since);
 }

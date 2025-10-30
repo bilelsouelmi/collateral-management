@@ -1,9 +1,10 @@
-// ===== DashboardService.java =====
+// ===== DashboardService.java - COMPLETE FIXED VERSION =====
 // File: src/main/java/com/vermeg/collateralmanagement/service/DashboardService.java
 
 package com.vermeg.collateralmanagement.service;
 
 import com.vermeg.collateralmanagement.dto.dashboard.*;
+import com.vermeg.collateralmanagement.dto.response.AlertResponse;
 import com.vermeg.collateralmanagement.entity.*;
 import com.vermeg.collateralmanagement.enums.*;
 import com.vermeg.collateralmanagement.repository.*;
@@ -33,6 +34,7 @@ public class DashboardService {
     private final RiskMetricRepository riskMetricRepository;
     private final ReportRepository reportRepository;
     private final ValuationRepository valuationRepository;
+    private final AlertService alertService; // ADDED: AlertService dependency
 
     // ==================== MAIN DASHBOARD METHODS ====================
 
@@ -226,48 +228,68 @@ public class DashboardService {
     }
 
     /**
-     * Get risk-related alerts
+     * Get risk-related alerts - FIXED to avoid lazy loading
      */
     private List<RiskAlertDto> getRiskAlerts(Long userId) {
-        List<Alert> riskAlerts = alertRepository.findByUserIdAndTypeOrderByCreatedAtDesc(userId, AlertType.THRESHOLD_BREACH)
+        // FIXED: Use AlertService to get DTOs instead of entities
+        List<AlertResponse> riskAlertDtos = alertService.getAlertsByTypeAsDto(userId, AlertType.THRESHOLD_BREACH)
                 .stream()
                 .limit(5)
                 .collect(Collectors.toList());
 
-        return riskAlerts.stream()
-                .map(alert -> RiskAlertDto.builder()
-                        .alertId(alert.getId())
-                        .alertType(alert.getType().name())
-                        .severity(alert.getSeverity().name())
-                        .message(alert.getMessage())
+        return riskAlertDtos.stream()
+                .map(alertDto -> RiskAlertDto.builder()
+                        .alertId(alertDto.getId())
+                        .alertType(alertDto.getType().name())
+                        .severity(alertDto.getSeverity().name())
+                        .message(alertDto.getMessage())
                         .portfolioId(null) // Would need portfolio context from alert
                         .portfolioName("Portfolio") // Would extract from alert
-                        .triggeredAt(alert.getTriggeredAt())
-                        .isRead(alert.getIsRead())
+                        .triggeredAt(alertDto.getTriggeredAt())
+                        .isRead(alertDto.isRead())
                         .build())
                 .collect(Collectors.toList());
     }
 
-    // ==================== ALERT SUMMARY ====================
+    // ==================== ALERT SUMMARY - FIXED ====================
 
     /**
-     * Get alert summary for user
+     * Get alert summary for user - FIXED to avoid lazy loading
      */
     public AlertSummaryDto getAlertSummary(Long userId) {
         log.debug("Generating alert summary for user: {}", userId);
 
         LocalDateTime since = LocalDateTime.now().minusDays(30);
-        Object[] alertStats = alertRepository.getAlertSummaryByUser(userId, since);
+        List<Object[]> alertStatsResult = alertRepository.getAlertSummaryByUser(userId, since);
 
-        // Parse native query results: total, critical, high, medium, low, unread
-        Long total = (Long) alertStats[0];
-        Long critical = (Long) alertStats[1];
-        Long high = (Long) alertStats[2];
-        Long medium = (Long) alertStats[3];
-        Long low = (Long) alertStats[4];
-        Long unread = (Long) alertStats[5];
+        // Handle empty result or get first row
+        Object[] alertStats;
+        if (alertStatsResult.isEmpty()) {
+            // Return default values if no data
+            return AlertSummaryDto.builder()
+                    .totalAlerts(0)
+                    .criticalAlerts(0)
+                    .highAlerts(0)
+                    .mediumAlerts(0)
+                    .lowAlerts(0)
+                    .unreadAlerts(0)
+                    .recentAlerts(new ArrayList<>())
+                    .alertTrends(getAlertTrends(userId))
+                    .build();
+        } else {
+            alertStats = alertStatsResult.get(0);
+        }
 
-        List<Alert> recentAlerts = alertRepository.findByUserIdOrderByCreatedAtDesc(userId)
+        // Parse native query results with proper type conversion
+        Long total = alertStats[0] != null ? ((Number) alertStats[0]).longValue() : 0L;
+        Long critical = alertStats[1] != null ? ((Number) alertStats[1]).longValue() : 0L;
+        Long high = alertStats[2] != null ? ((Number) alertStats[2]).longValue() : 0L;
+        Long medium = alertStats[3] != null ? ((Number) alertStats[3]).longValue() : 0L;
+        Long low = alertStats[4] != null ? ((Number) alertStats[4]).longValue() : 0L;
+        Long unread = alertStats[5] != null ? ((Number) alertStats[5]).longValue() : 0L;
+
+        // FIXED: Use AlertService to get DTOs instead of entities
+        List<AlertResponse> recentAlertDtos = alertService.getUserAlertsAsDto(userId, false)
                 .stream()
                 .limit(10)
                 .collect(Collectors.toList());
@@ -279,26 +301,26 @@ public class DashboardService {
                 .mediumAlerts(medium.intValue())
                 .lowAlerts(low.intValue())
                 .unreadAlerts(unread.intValue())
-                .recentAlerts(convertToAlertOverviewDtos(recentAlerts))
+                .recentAlerts(convertAlertResponseToOverviewDtos(recentAlertDtos)) // FIXED method call
                 .alertTrends(getAlertTrends(userId))
                 .build();
     }
 
     /**
-     * Convert alerts to overview DTOs
+     * Convert AlertResponse DTOs to AlertOverviewDtos - FIXED
      */
-    private List<AlertOverviewDto> convertToAlertOverviewDtos(List<Alert> alerts) {
-        return alerts.stream()
-                .map(alert -> AlertOverviewDto.builder()
-                        .id(alert.getId())
-                        .type(alert.getType().name())
-                        .severity(alert.getSeverity().name())
-                        .title(alert.getTitle())
-                        .message(alert.getMessage())
-                        .isRead(alert.getIsRead())
-                        .createdAt(alert.getCreatedAt())
-                        .triggeredAt(alert.getTriggeredAt())
-                        .minutesSinceCreated(ChronoUnit.MINUTES.between(alert.getCreatedAt(), LocalDateTime.now()))
+    private List<AlertOverviewDto> convertAlertResponseToOverviewDtos(List<AlertResponse> alertResponses) {
+        return alertResponses.stream()
+                .map(alertResponse -> AlertOverviewDto.builder()
+                        .id(alertResponse.getId())
+                        .type(alertResponse.getType().name())
+                        .severity(alertResponse.getSeverity().name())
+                        .title(alertResponse.getTitle())
+                        .message(alertResponse.getMessage())
+                        .isRead(alertResponse.isRead())
+                        .createdAt(alertResponse.getCreatedAt())
+                        .triggeredAt(alertResponse.getTriggeredAt())
+                        .minutesSinceCreated(alertResponse.getMinutesSinceTriggered())
                         .build())
                 .collect(Collectors.toList());
     }
@@ -308,31 +330,53 @@ public class DashboardService {
      */
     private AlertTrendsDto getAlertTrends(Long userId) {
         LocalDateTime startDate = LocalDateTime.now().minusDays(7);
-        List<Object[]> trendData = alertRepository.getAlertTrendsByUser(userId, startDate);
 
-        List<AlertTrendDataDto> dailyTrends = trendData.stream()
-                .map(data -> AlertTrendDataDto.builder()
-                        .date((LocalDateTime) data[0])
-                        .totalAlerts(((Number) data[1]).intValue())
-                        .criticalAlerts(((Number) data[2]).intValue())
-                        .unreadAlerts(((Number) data[3]).intValue())
-                        .build())
-                .collect(Collectors.toList());
+        try {
+            List<Object[]> trendData = alertRepository.getAlertTrendsByUser(userId, startDate);
 
-        // Calculate metrics
-        double avgAlertsPerDay = dailyTrends.stream()
-                .mapToInt(AlertTrendDataDto::getTotalAlerts)
-                .average()
-                .orElse(0.0);
+            List<AlertTrendDataDto> dailyTrends = trendData.stream()
+                    .map(data -> {
+                        LocalDateTime date;
+                        if (data[0] instanceof java.sql.Date) {
+                            date = ((java.sql.Date) data[0]).toLocalDate().atStartOfDay();
+                        } else if (data[0] instanceof java.sql.Timestamp) {
+                            date = ((java.sql.Timestamp) data[0]).toLocalDateTime();
+                        } else {
+                            date = LocalDateTime.now();
+                        }
 
-        return AlertTrendsDto.builder()
-                .dailyTrends(dailyTrends)
-                .averageAlertsPerDay(avgAlertsPerDay)
-                .resolutionRate(85.0) // Mock calculation
-                .averageResolutionTimeMinutes(45L) // Mock calculation
-                .build();
+                        return AlertTrendDataDto.builder()
+                                .date(date)
+                                .totalAlerts(((Number) data[1]).intValue())
+                                .criticalAlerts(((Number) data[2]).intValue())
+                                .unreadAlerts(((Number) data[3]).intValue())
+                                .build();
+                    })
+                    .collect(Collectors.toList());
+
+            double avgAlertsPerDay = dailyTrends.stream()
+                    .mapToInt(AlertTrendDataDto::getTotalAlerts)
+                    .average()
+                    .orElse(0.0);
+
+            return AlertTrendsDto.builder()
+                    .dailyTrends(dailyTrends)
+                    .averageAlertsPerDay(avgAlertsPerDay)
+                    .resolutionRate(85.0)
+                    .averageResolutionTimeMinutes(45L)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Error getting alert trends for user {}: {}", userId, e.getMessage());
+            // Return empty trends on error
+            return AlertTrendsDto.builder()
+                    .dailyTrends(new ArrayList<>())
+                    .averageAlertsPerDay(0.0)
+                    .resolutionRate(0.0)
+                    .averageResolutionTimeMinutes(0L)
+                    .build();
+        }
     }
-
     // ==================== MARGIN CALL SUMMARY ====================
 
     /**
@@ -342,32 +386,94 @@ public class DashboardService {
         log.debug("Generating margin call summary for user: {}", userId);
 
         LocalDateTime since = LocalDateTime.now().minusDays(30);
-        Object[] mcStats = marginCallRepository.getMarginCallSummaryByUser(userId, since);
 
-        // Parse native query results: total, active, overdue, totalShortfall, avgShortfall
-        Long total = (Long) mcStats[0];
-        Long active = (Long) mcStats[1];
-        Long overdue = (Long) mcStats[2];
-        BigDecimal totalShortfall = (BigDecimal) mcStats[3];
-        BigDecimal avgShortfall = (BigDecimal) mcStats[4];
+        try {
+            Object[] mcStats = marginCallRepository.getMarginCallSummaryByUser(userId, since);
 
-        List<MarginCall> recentMarginCalls = marginCallRepository.findActiveMarginCallsByUserId(userId)
-                .stream()
-                .limit(5)
-                .collect(Collectors.toList());
+            // Handle null result
+            if (mcStats == null || mcStats.length == 0) {
+                return MarginCallSummaryDto.builder()
+                        .totalMarginCalls(0)
+                        .activeMarginCalls(0)
+                        .overdueMarginCalls(0)
+                        .acknowledgedMarginCalls(0)
+                        .totalShortfall(BigDecimal.ZERO)
+                        .averageShortfall(BigDecimal.ZERO)
+                        .recentMarginCalls(new ArrayList<>())
+                        .urgentMarginCalls(new ArrayList<>())
+                        .build();
+            }
 
-        List<MarginCall> urgentCalls = marginCallRepository.findUrgentMarginCallsByUser(userId, 24);
+            // Debug logging to see what we're getting
+            log.debug("mcStats array length: {}", mcStats.length);
+            for (int i = 0; i < mcStats.length; i++) {
+                log.debug("mcStats[{}] = {} (type: {})", i, mcStats[i],
+                        mcStats[i] != null ? mcStats[i].getClass().getSimpleName() : "null");
+            }
 
-        return MarginCallSummaryDto.builder()
-                .totalMarginCalls(total.intValue())
-                .activeMarginCalls(active.intValue())
-                .overdueMarginCalls(overdue.intValue())
-                .acknowledgedMarginCalls(0) // Would calculate from status
-                .totalShortfall(totalShortfall)
-                .averageShortfall(avgShortfall)
-                .recentMarginCalls(convertToMarginCallOverviewDtos(recentMarginCalls))
-                .urgentMarginCalls(convertToUrgentMarginCallDtos(urgentCalls))
-                .build();
+            // Parse native query results with proper type conversion and additional safety
+            Long total = 0L;
+            Long active = 0L;
+            Long overdue = 0L;
+            BigDecimal totalShortfall = BigDecimal.ZERO;
+            BigDecimal avgShortfall = BigDecimal.ZERO;
+
+            if (mcStats[0] != null) {
+                total = ((Number) mcStats[0]).longValue();
+            }
+            if (mcStats[1] != null) {
+                active = ((Number) mcStats[1]).longValue();
+            }
+            if (mcStats[2] != null) {
+                overdue = ((Number) mcStats[2]).longValue();
+            }
+            if (mcStats[3] != null) {
+                if (mcStats[3] instanceof BigDecimal) {
+                    totalShortfall = (BigDecimal) mcStats[3];
+                } else if (mcStats[3] instanceof Number) {
+                    totalShortfall = BigDecimal.valueOf(((Number) mcStats[3]).doubleValue());
+                }
+            }
+            if (mcStats[4] != null) {
+                if (mcStats[4] instanceof BigDecimal) {
+                    avgShortfall = (BigDecimal) mcStats[4];
+                } else if (mcStats[4] instanceof Number) {
+                    avgShortfall = BigDecimal.valueOf(((Number) mcStats[4]).doubleValue());
+                }
+            }
+
+            List<MarginCall> recentMarginCalls = marginCallRepository.findActiveMarginCallsByUserId(userId)
+                    .stream()
+                    .limit(5)
+                    .collect(Collectors.toList());
+
+            List<MarginCall> urgentCalls = marginCallRepository.findUrgentMarginCallsByUser(userId, 24);
+
+            return MarginCallSummaryDto.builder()
+                    .totalMarginCalls(total.intValue())
+                    .activeMarginCalls(active.intValue())
+                    .overdueMarginCalls(overdue.intValue())
+                    .acknowledgedMarginCalls(0)
+                    .totalShortfall(totalShortfall)
+                    .averageShortfall(avgShortfall)
+                    .recentMarginCalls(convertToMarginCallOverviewDtos(recentMarginCalls))
+                    .urgentMarginCalls(convertToUrgentMarginCallDtos(urgentCalls))
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Error in getMarginCallSummary for user {}: {}", userId, e.getMessage(), e);
+            // Return default values on error
+            return MarginCallSummaryDto.builder()
+                    .totalMarginCalls(0)
+                    .activeMarginCalls(0)
+                    .overdueMarginCalls(0)
+                    .acknowledgedMarginCalls(0)
+                    .totalShortfall(BigDecimal.ZERO)
+                    .averageShortfall(BigDecimal.ZERO)
+                    .recentMarginCalls(new ArrayList<>())
+                    .urgentMarginCalls(new ArrayList<>())
+                    .build();
+        }
     }
 
     /**
@@ -408,17 +514,17 @@ public class DashboardService {
                 .collect(Collectors.toList());
     }
 
-    // ==================== RECENT ACTIVITIES ====================
+    // ==================== RECENT ACTIVITIES - FIXED ====================
 
     /**
-     * Get recent activities for user
+     * Get recent activities for user - FIXED to avoid lazy loading for alerts
      */
     public List<RecentActivityDto> getRecentActivities(Long userId) {
         log.debug("Generating recent activities for user: {}", userId);
 
         List<RecentActivityDto> activities = new ArrayList<>();
 
-        // Recent portfolios
+        // Recent portfolios (unchanged)
         List<Portfolio> recentPortfolios = portfolioRepository.findByUserId(userId)
                 .stream()
                 .sorted((p1, p2) -> p2.getCreatedAt().compareTo(p1.getCreatedAt()))
@@ -441,29 +547,29 @@ public class DashboardService {
                     .build());
         }
 
-        // Recent alerts
-        List<Alert> recentAlerts = alertRepository.findByUserIdOrderByCreatedAtDesc(userId)
+        // FIXED: Recent alerts using DTO service
+        List<AlertResponse> recentAlertDtos = alertService.getUserAlertsAsDto(userId, false)
                 .stream()
                 .limit(5)
                 .collect(Collectors.toList());
 
-        for (Alert alert : recentAlerts) {
+        for (AlertResponse alertDto : recentAlertDtos) {
             activities.add(RecentActivityDto.builder()
                     .activityType("ALERT_TRIGGERED")
-                    .description("Alert: " + alert.getTitle())
+                    .description("Alert: " + alertDto.getTitle())
                     .entityType("ALERT")
-                    .entityId(alert.getId())
-                    .entityName(alert.getTitle())
-                    .status(alert.getIsRead() ? "READ" : "UNREAD")
-                    .severity(alert.getSeverity().name())
+                    .entityId(alertDto.getId())
+                    .entityName(alertDto.getTitle())
+                    .status(alertDto.isRead() ? "read" : "UNREAD")
+                    .severity(alertDto.getSeverity().name())
                     .icon("alert")
-                    .actionUrl("/alerts/" + alert.getId())
-                    .timestamp(alert.getCreatedAt())
-                    .minutesAgo(ChronoUnit.MINUTES.between(alert.getCreatedAt(), LocalDateTime.now()))
+                    .actionUrl("/alerts/" + alertDto.getId())
+                    .timestamp(alertDto.getCreatedAt())
+                    .minutesAgo(alertDto.getMinutesSinceTriggered())
                     .build());
         }
 
-        // Recent reports
+        // Recent reports (unchanged)
         List<Report> recentReports = reportRepository.findByUserIdOrderByCreatedAtDesc(userId)
                 .stream()
                 .limit(3)

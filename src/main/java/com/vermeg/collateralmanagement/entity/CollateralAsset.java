@@ -15,7 +15,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "collateral_assets")
@@ -80,14 +81,16 @@ public class CollateralAsset {
     private LocalDateTime lastModifiedAt;
 
     // Relationships
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "portfolio_id", nullable = false)
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "portfolio_id", nullable = true)
     @JsonIgnoreProperties({"assets", "hibernateLazyInitializer", "handler"})
     private Portfolio portfolio;
 
-    @OneToMany(mappedBy = "collateralAsset", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    // ✅ CHANGED: Set to List to fix ConcurrentModificationException
+    @OneToMany(mappedBy = "collateralAsset", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonIgnoreProperties({"collateralAsset", "hibernateLazyInitializer", "handler"})
-    private Set<Valuation> valuations;
+    @Builder.Default
+    private List<Valuation> valuations = new ArrayList<>();
 
     // Business methods
     public BigDecimal getAdjustedValue() {

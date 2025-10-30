@@ -91,7 +91,7 @@ public class AnalyticsController {
     /**
      * Get portfolio asset allocation breakdown
      */
-    @GetMapping("/portfolio/allocation")
+    @GetMapping("/api/portfolio/allocation")
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
     public ResponseEntity<ApiResponse<List<AssetAllocationDto>>> getAssetAllocation(
             Authentication auth,
@@ -119,7 +119,7 @@ public class AnalyticsController {
     /**
      * Get portfolio concentration analysis
      */
-    @GetMapping("/portfolio/concentration")
+    @GetMapping("/api/portfolio/concentration")
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getConcentrationAnalysis(
             Authentication auth,

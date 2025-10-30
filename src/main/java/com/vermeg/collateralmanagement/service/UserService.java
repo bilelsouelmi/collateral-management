@@ -1,12 +1,20 @@
 package com.vermeg.collateralmanagement.service;
 
+import com.vermeg.collateralmanagement.dto.request.PasswordChangeRequest;
+import com.vermeg.collateralmanagement.dto.request.ProfileUpdateRequest;
+import com.vermeg.collateralmanagement.dto.request.UserPreferencesRequest;
+import com.vermeg.collateralmanagement.dto.response.ProfileResponse;
+import com.vermeg.collateralmanagement.dto.response.UserPreferencesResponse;
 import com.vermeg.collateralmanagement.entity.User;
+import com.vermeg.collateralmanagement.entity.UserPreferences;
 import com.vermeg.collateralmanagement.repository.UserRepository;
+import com.vermeg.collateralmanagement.repository.UserPreferencesRepository;
 import com.vermeg.collateralmanagement.repository.RoleRepository;
 import com.vermeg.collateralmanagement.security.UserPrincipal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,7 +33,15 @@ public class UserService {
     private UserRepository userRepository;
 
     @Autowired
+    private UserPreferencesRepository userPreferencesRepository;
+
+    @Autowired
     private RoleRepository roleRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    // ==================== EXISTING METHODS ====================
 
     /**
      * Find user by ID
@@ -131,17 +147,14 @@ public class UserService {
 
         Map<String, Object> stats = new HashMap<>();
 
-        // Basic stats available to all users
         stats.put("currentUser", currentUser.getUsername());
         stats.put("userRole", currentUser.getAuthorities().iterator().next().getAuthority());
-        stats.put("lastLogin", LocalDateTime.now()); // Will be updated with actual last login later
+        stats.put("lastLogin", LocalDateTime.now());
 
-        // Role-specific statistics
         String role = currentUser.getAuthorities().iterator().next().getAuthority();
 
         switch (role) {
             case "ROLE_ADMINISTRATOR":
-                // Admin gets full system statistics
                 stats.put("totalUsers", userRepository.count());
                 stats.put("activeUsers", userRepository.countActiveUsers());
                 stats.put("totalRoles", roleRepository.count());
@@ -149,16 +162,14 @@ public class UserService {
                 break;
 
             case "ROLE_RISK_OFFICER":
-                // Risk officers get risk-related statistics
                 stats.put("activeUsers", userRepository.countActiveUsers());
-                stats.put("riskAssessments", 0); // Will be implemented with collateral entities
-                stats.put("portfolioCount", 0); // Will be implemented with portfolio entities
+                stats.put("riskAssessments", 0);
+                stats.put("portfolioCount", 0);
                 break;
 
             case "ROLE_MANAGER":
-                // Managers get summary view
                 stats.put("managedUsers", userRepository.countActiveUsers());
-                stats.put("reportsGenerated", 0); // Will be implemented later
+                stats.put("reportsGenerated", 0);
                 break;
 
             default:
@@ -197,5 +208,200 @@ public class UserService {
      */
     public long getActiveUserCount() {
         return userRepository.countActiveUsers();
+    }
+
+    // ==================== NEW PROFILE METHODS ====================
+
+    /**
+     * Get user profile
+     */
+    public ProfileResponse getUserProfile(Long userId) {
+        log.debug("Getting profile for user ID: {}", userId);
+
+        User user = findById(userId);
+
+        return ProfileResponse.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .firstName(user.getFirstName())
+                .lastName(user.getLastName())
+                .fullName(user.getFullName())
+                .phoneNumber(user.getPhoneNumber())
+                .role(user.getRole() != null ? user.getRole().getName() : "N/A")
+                .isActive(user.getIsActive())
+                .createdAt(user.getCreatedAt())
+                .lastLogin(user.getLastLogin())
+                .lastModifiedAt(user.getLastModifiedAt())
+                .build();
+    }
+
+    /**
+     * Update user profile
+     */
+    public ProfileResponse updateUserProfile(Long userId, ProfileUpdateRequest request) {
+        log.info("Updating profile for user ID: {}", userId);
+
+        User user = findById(userId);
+
+        // Check if email is being changed and if it's already in use
+        if (!user.getEmail().equals(request.getEmail())) {
+            if (userRepository.existsByEmail(request.getEmail())) {
+                throw new RuntimeException("Email is already in use by another user");
+            }
+        }
+
+        user.setFirstName(request.getFirstName());
+        user.setLastName(request.getLastName());
+        user.setEmail(request.getEmail());
+        user.setPhoneNumber(request.getPhoneNumber());
+
+        User updatedUser = userRepository.save(user);
+        log.info("Profile updated successfully for user ID: {}", userId);
+
+        return getUserProfile(updatedUser.getId());
+    }
+
+    /**
+     * Change user password
+     */
+    public void changePassword(Long userId, PasswordChangeRequest request) {
+        log.info("Attempting password change for user ID: {}", userId);
+
+        // Validate new password matches confirmation
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new RuntimeException("New password and confirmation do not match");
+        }
+
+        User user = findById(userId);
+
+        // Verify current password
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+            throw new RuntimeException("Current password is incorrect");
+        }
+
+        // Check if new password is same as current
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
+            throw new RuntimeException("New password must be different from current password");
+        }
+
+        // Update password
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        log.info("Password changed successfully for user ID: {}", userId);
+    }
+
+    // ==================== NEW PREFERENCES METHODS ====================
+
+    /**
+     * Get user preferences
+     */
+    public UserPreferencesResponse getUserPreferences(Long userId) {
+        log.debug("Getting preferences for user ID: {}", userId);
+
+        UserPreferences preferences = userPreferencesRepository.findByUserId(userId)
+                .orElseGet(() -> createDefaultPreferences(userId));
+
+        return mapToPreferencesResponse(preferences);
+    }
+
+    /**
+     * Update user preferences
+     */
+    public UserPreferencesResponse updateUserPreferences(Long userId, UserPreferencesRequest request) {
+        log.info("Updating preferences for user ID: {}", userId);
+
+        User user = findById(userId);
+
+        UserPreferences preferences = userPreferencesRepository.findByUserId(userId)
+                .orElse(UserPreferences.builder().user(user).build());
+
+        // Update notification preferences
+        if (request.getEmailNotifications() != null) {
+            preferences.setEmailNotifications(request.getEmailNotifications());
+        }
+        if (request.getAlertNotifications() != null) {
+            preferences.setAlertNotifications(request.getAlertNotifications());
+        }
+        if (request.getMarginCallNotifications() != null) {
+            preferences.setMarginCallNotifications(request.getMarginCallNotifications());
+        }
+        if (request.getReportNotifications() != null) {
+            preferences.setReportNotifications(request.getReportNotifications());
+        }
+
+        // Update display preferences
+        if (request.getTheme() != null) {
+            preferences.setTheme(request.getTheme());
+        }
+        if (request.getLanguage() != null) {
+            preferences.setLanguage(request.getLanguage());
+        }
+        if (request.getDateFormat() != null) {
+            preferences.setDateFormat(request.getDateFormat());
+        }
+        if (request.getCurrency() != null) {
+            preferences.setCurrency(request.getCurrency());
+        }
+
+        // Update dashboard preferences
+        if (request.getDefaultView() != null) {
+            preferences.setDefaultView(request.getDefaultView());
+        }
+        if (request.getShowWelcomeMessage() != null) {
+            preferences.setShowWelcomeMessage(request.getShowWelcomeMessage());
+        }
+
+        // Update alert thresholds
+        if (request.getRiskAlertThreshold() != null) {
+            preferences.setRiskAlertThreshold(request.getRiskAlertThreshold());
+        }
+        if (request.getMarginCallThreshold() != null) {
+            preferences.setMarginCallThreshold(request.getMarginCallThreshold());
+        }
+
+        UserPreferences savedPreferences = userPreferencesRepository.save(preferences);
+        log.info("Preferences updated successfully for user ID: {}", userId);
+
+        return mapToPreferencesResponse(savedPreferences);
+    }
+
+    /**
+     * Create default preferences for new user
+     */
+    private UserPreferences createDefaultPreferences(Long userId) {
+        log.debug("Creating default preferences for user ID: {}", userId);
+
+        User user = findById(userId);
+        UserPreferences preferences = UserPreferences.builder()
+                .user(user)
+                .build();
+
+        return userPreferencesRepository.save(preferences);
+    }
+
+    /**
+     * Map UserPreferences entity to response DTO
+     */
+    private UserPreferencesResponse mapToPreferencesResponse(UserPreferences preferences) {
+        return UserPreferencesResponse.builder()
+                .id(preferences.getId())
+                .userId(preferences.getUser().getId())
+                .emailNotifications(preferences.getEmailNotifications())
+                .alertNotifications(preferences.getAlertNotifications())
+                .marginCallNotifications(preferences.getMarginCallNotifications())
+                .reportNotifications(preferences.getReportNotifications())
+                .theme(preferences.getTheme())
+                .language(preferences.getLanguage())
+                .dateFormat(preferences.getDateFormat())
+                .currency(preferences.getCurrency())
+                .defaultView(preferences.getDefaultView())
+                .showWelcomeMessage(preferences.getShowWelcomeMessage())
+                .riskAlertThreshold(preferences.getRiskAlertThreshold())
+                .marginCallThreshold(preferences.getMarginCallThreshold())
+                .createdAt(preferences.getCreatedAt())
+                .lastModifiedAt(preferences.getLastModifiedAt())
+                .build();
     }
 }

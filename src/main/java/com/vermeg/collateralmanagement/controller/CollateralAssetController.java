@@ -1,6 +1,11 @@
 package com.vermeg.collateralmanagement.controller;
 
+import com.vermeg.collateralmanagement.dto.request.CreateAssetRequest;
+import com.vermeg.collateralmanagement.dto.request.UpdateAssetRequest;
+import com.vermeg.collateralmanagement.dto.response.ApiResponse;
+import com.vermeg.collateralmanagement.dto.response.AssetResponse;
 import com.vermeg.collateralmanagement.entity.CollateralAsset;
+import com.vermeg.collateralmanagement.mapper.AssetMapper;
 import com.vermeg.collateralmanagement.service.CollateralAssetService;
 import com.vermeg.collateralmanagement.security.UserPrincipal;
 import org.slf4j.Logger;
@@ -9,14 +14,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/assets")
+@RequestMapping("/api/assets")
 @CrossOrigin(origins = "*")
 public class CollateralAssetController {
 
@@ -25,21 +32,31 @@ public class CollateralAssetController {
     @Autowired
     private CollateralAssetService collateralAssetService;
 
+    @Autowired
+    private AssetMapper assetMapper;
+
     /**
      * Add Collateral Asset - Use Case: Add Collateral Asset
      */
     @PostMapping
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> addCollateralAsset(@Valid @RequestBody CollateralAsset asset,
-                                                @AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} adding collateral asset: {}", currentUser.getUsername(), asset.getName());
+    public ResponseEntity<ApiResponse<AssetResponse>> addCollateralAsset(
+            @Valid @RequestBody CreateAssetRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
+        log.info("User {} adding collateral asset: {}", currentUser.getUsername(), request.getName());
 
         try {
+            CollateralAsset asset = assetMapper.toEntity(request);
             CollateralAsset createdAsset = collateralAssetService.addCollateralAsset(asset, currentUser.getId());
-            return ResponseEntity.ok(createdAsset);
+            AssetResponse response = assetMapper.toResponse(createdAsset);
+
+            return ResponseEntity.ok(ApiResponse.success("Asset created successfully", response));
         } catch (Exception e) {
             log.error("Failed to add collateral asset: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to add asset: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to add asset", e.getMessage()));
         }
     }
 
@@ -47,29 +64,42 @@ public class CollateralAssetController {
      * Get User's Assets
      */
     @GetMapping
+    @Transactional(readOnly = true)  // ✅ AJOUTÉ - C'EST LA CLÉ !
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<List<CollateralAsset>> getUserAssets(@AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<List<AssetResponse>>> getUserAssets(
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} requesting their assets", currentUser.getUsername());
 
         List<CollateralAsset> assets = collateralAssetService.getUserAssets(currentUser.getId());
-        return ResponseEntity.ok(assets);
+        List<AssetResponse> response = assets.stream()
+                .map(assetMapper::toResponse)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     /**
      * Get Asset by ID - Use Case: View Asset Details
      */
     @GetMapping("/{assetId}")
+    @Transactional(readOnly = true)  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> getAssetDetails(@PathVariable Long assetId,
-                                             @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<AssetResponse>> getAssetDetails(
+            @PathVariable Long assetId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} requesting asset details for ID: {}", currentUser.getUsername(), assetId);
 
         try {
             CollateralAsset asset = collateralAssetService.getAssetDetails(assetId, currentUser.getId());
-            return ResponseEntity.ok(asset);
+            AssetResponse response = assetMapper.toResponse(asset);
+
+            return ResponseEntity.ok(ApiResponse.success(response));
         } catch (Exception e) {
             log.error("Failed to get asset details: {}", e.getMessage());
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to get asset details", e.getMessage()));
         }
     }
 
@@ -77,18 +107,25 @@ public class CollateralAssetController {
      * Update Asset
      */
     @PutMapping("/{assetId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> updateAsset(@PathVariable Long assetId,
-                                         @Valid @RequestBody CollateralAsset assetUpdate,
-                                         @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<AssetResponse>> updateAsset(
+            @PathVariable Long assetId,
+            @Valid @RequestBody UpdateAssetRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} updating asset ID: {}", currentUser.getUsername(), assetId);
+        log.info("Update request - status: {}", request.getStatus());
 
         try {
-            CollateralAsset updatedAsset = collateralAssetService.updateAsset(assetId, assetUpdate, currentUser.getId());
-            return ResponseEntity.ok(updatedAsset);
+            // Use the NEW DTO-based service method (line 77 in service)
+            AssetResponse response = collateralAssetService.updateAsset(assetId, request, currentUser.getId());
+
+            return ResponseEntity.ok(ApiResponse.success("Asset updated successfully", response));
         } catch (Exception e) {
-            log.error("Failed to update asset: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to update asset: " + e.getMessage());
+            log.error("Failed to update asset: ", e);
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to update asset", e.getMessage()));
         }
     }
 
@@ -96,17 +133,22 @@ public class CollateralAssetController {
      * Remove Asset - Use Case: Remove Asset
      */
     @DeleteMapping("/{assetId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> removeAsset(@PathVariable Long assetId,
-                                         @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<String>> removeAsset(
+            @PathVariable Long assetId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} removing asset ID: {}", currentUser.getUsername(), assetId);
 
         try {
             collateralAssetService.removeAsset(assetId, currentUser.getId());
-            return ResponseEntity.ok("Asset removed successfully");
+            return ResponseEntity.ok(ApiResponse.success("Asset removed successfully"));
         } catch (Exception e) {
-            log.error("Failed to remove asset: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to remove asset: " + e.getMessage());
+            log.error("Failed to remove asset: ", e);
+            String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to remove asset", errorMessage));
         }
     }
 
@@ -114,18 +156,24 @@ public class CollateralAssetController {
      * Assign Asset to Portfolio - Use Case: Assign Asset to Portfolio
      */
     @PostMapping("/{assetId}/assign/{portfolioId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> assignAssetToPortfolio(@PathVariable Long assetId,
-                                                    @PathVariable Long portfolioId,
-                                                    @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<AssetResponse>> assignAssetToPortfolio(
+            @PathVariable Long assetId,
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} assigning asset {} to portfolio {}", currentUser.getUsername(), assetId, portfolioId);
 
         try {
             CollateralAsset updatedAsset = collateralAssetService.assignAssetToPortfolio(assetId, portfolioId, currentUser.getId());
-            return ResponseEntity.ok(updatedAsset);
+            AssetResponse response = assetMapper.toResponse(updatedAsset);
+
+            return ResponseEntity.ok(ApiResponse.success("Asset assigned successfully", response));
         } catch (Exception e) {
             log.error("Failed to assign asset to portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to assign asset: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to assign asset", e.getMessage()));
         }
     }
 
@@ -133,79 +181,24 @@ public class CollateralAssetController {
      * Update Asset Market Value
      */
     @PutMapping("/{assetId}/value")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> updateAssetValue(@PathVariable Long assetId,
-                                              @RequestParam BigDecimal newValue,
-                                              @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<AssetResponse>> updateAssetValue(
+            @PathVariable Long assetId,
+            @RequestParam BigDecimal newValue,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} updating value for asset ID: {} to {}", currentUser.getUsername(), assetId, newValue);
 
         try {
             CollateralAsset updatedAsset = collateralAssetService.updateAssetValue(assetId, newValue, currentUser.getId());
-            return ResponseEntity.ok(updatedAsset);
+            AssetResponse response = assetMapper.toResponse(updatedAsset);
+
+            return ResponseEntity.ok(ApiResponse.success("Asset value updated successfully", response));
         } catch (Exception e) {
             log.error("Failed to update asset value: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to update asset value: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Get Unassigned Assets
-     */
-    @GetMapping("/unassigned")
-    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<List<CollateralAsset>> getUnassignedAssets(@AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} requesting unassigned assets", currentUser.getUsername());
-
-        List<CollateralAsset> unassignedAssets = collateralAssetService.getUnassignedAssets();
-        return ResponseEntity.ok(unassignedAssets);
-    }
-
-    /**
-     * Get Assets by Portfolio
-     */
-    @GetMapping("/portfolio/{portfolioId}")
-    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> getAssetsByPortfolio(@PathVariable Long portfolioId,
-                                                  @AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} requesting assets for portfolio ID: {}", currentUser.getUsername(), portfolioId);
-
-        try {
-            List<CollateralAsset> assets = collateralAssetService.getAssetsByPortfolio(portfolioId, currentUser.getId());
-            return ResponseEntity.ok(assets);
-        } catch (Exception e) {
-            log.error("Failed to get portfolio assets: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to get portfolio assets: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Get Assets Nearing Maturity
-     */
-    @GetMapping("/maturity/{daysThreshold}")
-    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<List<CollateralAsset>> getAssetsNearingMaturity(@PathVariable int daysThreshold,
-                                                                          @AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} requesting assets nearing maturity within {} days", currentUser.getUsername(), daysThreshold);
-
-        List<CollateralAsset> nearingMaturity = collateralAssetService.getAssetsNearingMaturity(daysThreshold, currentUser.getId());
-        return ResponseEntity.ok(nearingMaturity);
-    }
-
-    /**
-     * Find Asset by Asset ID (business identifier)
-     */
-    @GetMapping("/search/{assetId}")
-    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> findAssetByAssetId(@PathVariable String assetId,
-                                                @AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} searching for asset with ID: {}", currentUser.getUsername(), assetId);
-
-        try {
-            CollateralAsset asset = collateralAssetService.findAssetByAssetId(assetId);
-            return ResponseEntity.ok(asset);
-        } catch (Exception e) {
-            log.error("Asset not found with ID: {}", assetId);
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to update asset value", e.getMessage()));
         }
     }
 }

@@ -110,14 +110,33 @@ public class AnalyticsService {
         log.debug("Generating alert analytics for user: {} over {} days", userId, periodDays);
 
         LocalDateTime since = LocalDateTime.now().minusDays(periodDays);
-        Object[] alertStats = alertRepository.getAlertSummaryByUser(userId, since);
+        List<Object[]> alertStatsResult = alertRepository.getAlertSummaryByUser(userId, since);
 
-        Long total = (Long) alertStats[0];
-        Long critical = (Long) alertStats[1];
-        Long high = (Long) alertStats[2];
-        Long medium = (Long) alertStats[3];
-        Long low = (Long) alertStats[4];
-        Long unread = (Long) alertStats[5];
+        // Handle empty result or get first row
+        Object[] alertStats;
+        if (alertStatsResult.isEmpty()) {
+            // Return default values if no data
+            return AlertSummaryDto.builder()
+                    .totalAlerts(0)
+                    .criticalAlerts(0)
+                    .highAlerts(0)
+                    .mediumAlerts(0)
+                    .lowAlerts(0)
+                    .unreadAlerts(0)
+                    .recentAlerts(new ArrayList<>())
+                    .alertTrends(getAlertTrends(userId, periodDays))
+                    .build();
+        } else {
+            alertStats = alertStatsResult.get(0);
+        }
+
+        // Parse native query results with proper type conversion
+        Long total = alertStats[0] != null ? ((Number) alertStats[0]).longValue() : 0L;
+        Long critical = alertStats[1] != null ? ((Number) alertStats[1]).longValue() : 0L;
+        Long high = alertStats[2] != null ? ((Number) alertStats[2]).longValue() : 0L;
+        Long medium = alertStats[3] != null ? ((Number) alertStats[3]).longValue() : 0L;
+        Long low = alertStats[4] != null ? ((Number) alertStats[4]).longValue() : 0L;
+        Long unread = alertStats[5] != null ? ((Number) alertStats[5]).longValue() : 0L;
 
         List<Alert> recentAlerts = alertRepository.findByUserIdOrderByCreatedAtDesc(userId)
                 .stream()

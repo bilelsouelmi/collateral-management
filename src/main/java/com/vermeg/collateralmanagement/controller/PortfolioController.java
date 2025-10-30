@@ -1,6 +1,12 @@
 package com.vermeg.collateralmanagement.controller;
 
+import com.vermeg.collateralmanagement.dto.request.CreatePortfolioRequest;
+import com.vermeg.collateralmanagement.dto.request.UpdatePortfolioRequest;
+import com.vermeg.collateralmanagement.dto.response.ApiResponse;
+import com.vermeg.collateralmanagement.dto.response.PortfolioResponse;
+import com.vermeg.collateralmanagement.dto.response.PortfolioStatsResponse;
 import com.vermeg.collateralmanagement.entity.Portfolio;
+import com.vermeg.collateralmanagement.mapper.PortfolioMapper;
 import com.vermeg.collateralmanagement.service.PortfolioService;
 import com.vermeg.collateralmanagement.security.UserPrincipal;
 import org.slf4j.Logger;
@@ -9,13 +15,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/portfolios")
+@RequestMapping("/api/portfolios")
 @CrossOrigin(origins = "*")
 public class PortfolioController {
 
@@ -24,164 +32,195 @@ public class PortfolioController {
     @Autowired
     private PortfolioService portfolioService;
 
-    /**
-     * Create Portfolio - Use Case: Create Portfolio
-     */
+    @Autowired
+    private PortfolioMapper portfolioMapper;
+
     @PostMapping
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> createPortfolio(@Valid @RequestBody Portfolio portfolio,
-                                             @AuthenticationPrincipal UserPrincipal currentUser) {
-        log.info("User {} creating portfolio: {}", currentUser.getUsername(), portfolio.getName());
+    public ResponseEntity<ApiResponse<PortfolioResponse>> createPortfolio(
+            @Valid @RequestBody CreatePortfolioRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
+        log.info("User {} creating portfolio: {}", currentUser.getUsername(), request.getName());
 
         try {
+            Portfolio portfolio = portfolioMapper.toEntity(request);
             Portfolio createdPortfolio = portfolioService.createPortfolio(portfolio, currentUser.getId());
-            return ResponseEntity.ok(createdPortfolio);
+            PortfolioResponse response = portfolioMapper.toResponse(createdPortfolio);
+
+            return ResponseEntity.ok(ApiResponse.success("Portfolio created successfully", response));
         } catch (Exception e) {
             log.error("Failed to create portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to create portfolio: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to create portfolio", e.getMessage()));
         }
     }
 
-    /**
-     * Get User's Portfolios
-     */
     @GetMapping
+    @Transactional(readOnly = true)  // ✅ AJOUTÉ - IMPORTANT !
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<List<Portfolio>> getUserPortfolios(@AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<List<PortfolioResponse>>> getUserPortfolios(
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} requesting their portfolios", currentUser.getUsername());
 
         List<Portfolio> portfolios = portfolioService.findPortfoliosByUserId(currentUser.getId());
-        return ResponseEntity.ok(portfolios);
+        List<PortfolioResponse> response = portfolios.stream()
+                .map(portfolioMapper::toResponse)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    /**
-     * Get Portfolio by ID
-     */
     @GetMapping("/{portfolioId}")
+    @Transactional(readOnly = true)  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> getPortfolio(@PathVariable Long portfolioId,
-                                          @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioResponse>> getPortfolio(
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} requesting portfolio ID: {}", currentUser.getUsername(), portfolioId);
 
         try {
             Portfolio portfolio = portfolioService.findPortfolioByIdAndUserId(portfolioId, currentUser.getId());
-            return ResponseEntity.ok(portfolio);
+            PortfolioResponse response = portfolioMapper.toResponse(portfolio);
+
+            return ResponseEntity.ok(ApiResponse.success(response));
         } catch (Exception e) {
             log.error("Failed to get portfolio: {}", e.getMessage());
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to get portfolio", e.getMessage()));
         }
     }
 
-    /**
-     * Update Portfolio
-     */
     @PutMapping("/{portfolioId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> updatePortfolio(@PathVariable Long portfolioId,
-                                             @Valid @RequestBody Portfolio portfolioUpdate,
-                                             @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioResponse>> updatePortfolio(
+            @PathVariable Long portfolioId,
+            @Valid @RequestBody UpdatePortfolioRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} updating portfolio ID: {}", currentUser.getUsername(), portfolioId);
 
         try {
-            Portfolio updatedPortfolio = portfolioService.updatePortfolio(portfolioId, portfolioUpdate, currentUser.getId());
-            return ResponseEntity.ok(updatedPortfolio);
+            Portfolio existingPortfolio = portfolioService.findPortfolioByIdAndUserId(portfolioId, currentUser.getId());
+            portfolioMapper.updateEntity(existingPortfolio, request);
+            Portfolio updatedPortfolio = portfolioService.updatePortfolio(portfolioId, existingPortfolio, currentUser.getId());
+            PortfolioResponse response = portfolioMapper.toResponse(updatedPortfolio);
+
+            return ResponseEntity.ok(ApiResponse.success("Portfolio updated successfully", response));
         } catch (Exception e) {
             log.error("Failed to update portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to update portfolio: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to update portfolio", e.getMessage()));
         }
     }
 
-    /**
-     * Delete Portfolio - Use Case: Delete Portfolio
-     */
     @DeleteMapping("/{portfolioId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> deletePortfolio(@PathVariable Long portfolioId,
-                                             @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<String>> deletePortfolio(
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} deleting portfolio ID: {}", currentUser.getUsername(), portfolioId);
 
         try {
             portfolioService.deletePortfolio(portfolioId, currentUser.getId());
-            return ResponseEntity.ok("Portfolio deleted successfully");
+            return ResponseEntity.ok(ApiResponse.success("Portfolio deleted successfully"));
         } catch (Exception e) {
             log.error("Failed to delete portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to delete portfolio: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to delete portfolio", e.getMessage()));
         }
     }
 
-    /**
-     * Add Asset to Portfolio - Use Case: Manage Portfolio Holdings
-     */
     @PostMapping("/{portfolioId}/assets/{assetId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> addAssetToPortfolio(@PathVariable Long portfolioId,
-                                                 @PathVariable Long assetId,
-                                                 @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioResponse>> addAssetToPortfolio(
+            @PathVariable Long portfolioId,
+            @PathVariable Long assetId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} adding asset {} to portfolio {}", currentUser.getUsername(), assetId, portfolioId);
 
         try {
             Portfolio updatedPortfolio = portfolioService.addAssetToPortfolio(portfolioId, assetId, currentUser.getId());
-            return ResponseEntity.ok(updatedPortfolio);
+            PortfolioResponse response = portfolioMapper.toResponse(updatedPortfolio);
+
+            return ResponseEntity.ok(ApiResponse.success("Asset added successfully", response));
         } catch (Exception e) {
             log.error("Failed to add asset to portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to add asset: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to add asset", e.getMessage()));
         }
     }
 
-    /**
-     * Remove Asset from Portfolio - Use Case: Manage Portfolio Holdings
-     */
     @DeleteMapping("/{portfolioId}/assets/{assetId}")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> removeAssetFromPortfolio(@PathVariable Long portfolioId,
-                                                      @PathVariable Long assetId,
-                                                      @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioResponse>> removeAssetFromPortfolio(
+            @PathVariable Long portfolioId,
+            @PathVariable Long assetId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} removing asset {} from portfolio {}", currentUser.getUsername(), assetId, portfolioId);
 
         try {
             Portfolio updatedPortfolio = portfolioService.removeAssetFromPortfolio(portfolioId, assetId, currentUser.getId());
-            return ResponseEntity.ok(updatedPortfolio);
+            PortfolioResponse response = portfolioMapper.toResponse(updatedPortfolio);
+
+            return ResponseEntity.ok(ApiResponse.success("Asset removed successfully", response));
         } catch (Exception e) {
             log.error("Failed to remove asset from portfolio: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to remove asset: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to remove asset", e.getMessage()));
         }
     }
 
-    /**
-     * Get Portfolio Statistics
-     */
     @GetMapping("/{portfolioId}/stats")
+    @Transactional(readOnly = true)  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
-    public ResponseEntity<?> getPortfolioStats(@PathVariable Long portfolioId,
-                                               @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioStatsResponse>> getPortfolioStats(
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} requesting stats for portfolio ID: {}", currentUser.getUsername(), portfolioId);
 
         try {
             PortfolioService.PortfolioStats stats = portfolioService.getPortfolioStats(portfolioId, currentUser.getId());
-            return ResponseEntity.ok(stats);
+            PortfolioStatsResponse response = portfolioMapper.toStatsResponse(stats);
+
+            return ResponseEntity.ok(ApiResponse.success(response));
         } catch (Exception e) {
             log.error("Failed to get portfolio stats: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to get portfolio stats: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to get portfolio stats", e.getMessage()));
         }
     }
 
-    /**
-     * Recalculate Portfolio Value
-     */
     @PostMapping("/{portfolioId}/recalculate")
+    @Transactional  // ✅ AJOUTÉ
     @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
-    public ResponseEntity<?> recalculatePortfolioValue(@PathVariable Long portfolioId,
-                                                       @AuthenticationPrincipal UserPrincipal currentUser) {
+    public ResponseEntity<ApiResponse<PortfolioResponse>> recalculatePortfolioValue(
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
         log.info("User {} recalculating value for portfolio ID: {}", currentUser.getUsername(), portfolioId);
 
         try {
-            // Verify user owns the portfolio
             portfolioService.findPortfolioByIdAndUserId(portfolioId, currentUser.getId());
             Portfolio updatedPortfolio = portfolioService.recalculatePortfolioValue(portfolioId);
-            return ResponseEntity.ok(updatedPortfolio);
+            PortfolioResponse response = portfolioMapper.toResponse(updatedPortfolio);
+
+            return ResponseEntity.ok(ApiResponse.success("Portfolio value recalculated successfully", response));
         } catch (Exception e) {
             log.error("Failed to recalculate portfolio value: {}", e.getMessage());
-            return ResponseEntity.badRequest().body("Failed to recalculate portfolio: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Failed to recalculate portfolio", e.getMessage()));
         }
     }
 }

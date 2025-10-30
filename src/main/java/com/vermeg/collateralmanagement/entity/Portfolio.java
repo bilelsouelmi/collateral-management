@@ -11,7 +11,8 @@
     import org.springframework.data.annotation.LastModifiedDate;
     import org.springframework.data.jpa.domain.support.AuditingEntityListener;
     import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-
+    import java.util.List;
+    import java.util.ArrayList;
     import java.math.BigDecimal;
     import java.time.LocalDateTime;
     import java.util.Set;
@@ -68,7 +69,8 @@
 
         @OneToMany(mappedBy = "portfolio", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
         @JsonIgnoreProperties({"portfolio", "hibernateLazyInitializer", "handler"})
-        private Set<CollateralAsset> assets;
+        @org.hibernate.annotations.Fetch(org.hibernate.annotations.FetchMode.SELECT)
+        private List<CollateralAsset> assets = new ArrayList<>();
 
         @OneToMany(mappedBy = "portfolio", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
         @JsonIgnoreProperties({"portfolio", "hibernateLazyInitializer", "handler"})

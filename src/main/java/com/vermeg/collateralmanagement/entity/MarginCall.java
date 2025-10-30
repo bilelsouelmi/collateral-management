@@ -60,7 +60,7 @@ public class MarginCall {
     private LocalDateTime lastModifiedAt;
 
     // Relationships
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "portfolio_id", nullable = false)
     @JsonIgnoreProperties({"marginCalls", "hibernateLazyInitializer", "handler"})
     private Portfolio portfolio;

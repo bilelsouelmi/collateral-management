@@ -1,9 +1,11 @@
 package com.vermeg.collateralmanagement.controller;
 
+import com.vermeg.collateralmanagement.dto.risk.*;
 import com.vermeg.collateralmanagement.entity.RiskMetric;
 import com.vermeg.collateralmanagement.service.MarginCallService;
 import com.vermeg.collateralmanagement.service.RiskMetricService;
 import com.vermeg.collateralmanagement.security.UserPrincipal;
+import com.vermeg.collateralmanagement.service.RiskSchedulerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,7 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
-@RequestMapping("/risk-metrics")
+@RequestMapping("/api/risk-metrics")
 @CrossOrigin(origins = "*")
 public class RiskMetricController {
 
@@ -29,6 +31,47 @@ public class RiskMetricController {
 
     @Autowired
     private MarginCallService marginCallService;
+
+    @Autowired
+    private RiskSchedulerService riskSchedulerService;
+
+    /**
+     * Get risk overview for current user
+     */
+    @GetMapping("/overview")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<RiskOverviewDto> getRiskOverview(@AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} requesting risk overview", currentUser.getUsername());
+
+        try {
+            RiskOverviewDto overview = riskMetricService.getRiskOverview(currentUser.getId());
+            return ResponseEntity.ok(overview);
+        } catch (Exception e) {
+            log.error("Failed to get risk overview: {}", e.getMessage());
+            throw new RuntimeException("Failed to get risk overview: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Get detailed risk analysis for a portfolio
+     */
+    @GetMapping("/portfolio/{portfolioId}/detail")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER') or hasRole('MANAGER')")
+    public ResponseEntity<PortfolioRiskDetailDto> getPortfolioRiskDetail(
+            @PathVariable Long portfolioId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} requesting risk detail for portfolio: {}",
+                currentUser.getUsername(), portfolioId);
+
+        try {
+            PortfolioRiskDetailDto detail = riskMetricService.getPortfolioRiskDetail(
+                    portfolioId, currentUser.getId());
+            return ResponseEntity.ok(detail);
+        } catch (Exception e) {
+            log.error("Failed to get portfolio risk detail: {}", e.getMessage());
+            throw new RuntimeException("Failed to get portfolio risk detail: " + e.getMessage());
+        }
+    }
 
     /**
      * Perform comprehensive risk assessment for a portfolio
@@ -157,8 +200,27 @@ public class RiskMetricController {
         boolean needsRecalculation = riskMetricService.needsRiskRecalculation(portfolioId);
         return ResponseEntity.ok(needsRecalculation);
     }
+    /**
+     * Manually trigger risk recalculation for all portfolios
+     */
+    @PostMapping("/recalculate-all")
+    @PreAuthorize("hasRole('ADMINISTRATOR') or hasRole('RISK_OFFICER')")
+    public ResponseEntity<?> recalculateAllRisks(@AuthenticationPrincipal UserPrincipal currentUser) {
+        log.info("User {} manually triggering risk recalculation for all portfolios",
+                currentUser.getUsername());
 
-    // Response DTO
+        try {
+            riskSchedulerService.recalculateAllRisksManually();
+            return ResponseEntity.ok("Risk recalculation triggered successfully for all portfolios");
+        } catch (Exception e) {
+            log.error("Failed to trigger risk recalculation: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body("Failed to trigger risk recalculation: " + e.getMessage());
+        }
+    }
+
+    // Response DTOs
+
     public static class StressTestResponse {
         public final Long portfolioId;
         public final BigDecimal stressPercentage;
@@ -168,6 +230,19 @@ public class RiskMetricController {
             this.portfolioId = portfolioId;
             this.stressPercentage = stressPercentage;
             this.stressedValue = stressedValue;
+        }
+
+        // Getters for JSON serialization
+        public Long getPortfolioId() {
+            return portfolioId;
+        }
+
+        public BigDecimal getStressPercentage() {
+            return stressPercentage;
+        }
+
+        public BigDecimal getStressedValue() {
+            return stressedValue;
         }
     }
 }
